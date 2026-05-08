@@ -112,7 +112,6 @@ export default function DashboardPage() {
     try {
       const res = await fetch('/api/analyze-restaurant', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ restaurantName: businessName.trim(), ville }),
       })
       const data = await res.json()
@@ -135,7 +134,6 @@ export default function DashboardPage() {
     try {
       const res = await fetch('/api/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ secteur, ville, ton, langue, businessName, restaurantData }),
       })
       if (!res.ok) { const d = await res.json(); throw new Error(d.error) }
@@ -160,7 +158,6 @@ export default function DashboardPage() {
     try {
       const res = await fetch('/api/generate-image', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ postText: post.text, secteur, businessName, ville }),
       })
       const data = await res.json()
