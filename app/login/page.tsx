@@ -19,14 +19,26 @@ export default function LoginPage() {
     setLoading(true)
     setError('')
 
-    const supabase = createClient()
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    try {
+      const supabase = createClient()
+      const { error } = await supabase.auth.signInWithPassword({ email, password })
 
-    if (error) {
-      setError('Email ou mot de passe incorrect.')
+      if (error) {
+        console.error('[login] signInWithPassword error:', error.status, error.message, error)
+        if (error.message.toLowerCase().includes('invalid') || error.status === 400) {
+          setError('Email ou mot de passe incorrect.')
+        } else {
+          setError(`Erreur de connexion : ${error.message}`)
+        }
+        setLoading(false)
+      } else {
+        router.refresh()
+        router.push('/dashboard')
+      }
+    } catch (err) {
+      console.error('[login] unexpected error:', err)
+      setError('Une erreur inattendue est survenue. Vérifie la console.')
       setLoading(false)
-    } else {
-      router.push('/dashboard')
     }
   }
 
