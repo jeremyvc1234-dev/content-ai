@@ -49,7 +49,7 @@ async function ddgSearch(query: string): Promise<SearchResult[]> {
       }
 
       if (title && url && url.startsWith('http')) {
-        results.push({ title, url, snippet })
+        results.push({ title, url, snippet: sanitizeText(snippet) })
       }
     })
 
@@ -100,6 +100,15 @@ function findOfficialUrl(results: SearchResult[], name: string): string | null {
   return results.find(r => !isBlockedDomain(r.url))?.url ?? null
 }
 
+// ─── Text sanitizer ───────────────────────────────────────────────────────────
+
+// Strips any character outside ISO-8859-1 (code point > 0xFF, e.g. emoji)
+// to prevent "String contains non ISO-8859-1 code point" errors in fetch headers
+// when this text is later forwarded to the Anthropic / OpenAI SDKs.
+function sanitizeText(text: string): string {
+  return text.replace(/[^\u0009\u000A\u000D\u0020-\u00FF]/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
 // ─── Website scraper ──────────────────────────────────────────────────────────
 
 async function scrapeWebsite(url: string): Promise<string> {
@@ -128,7 +137,8 @@ async function scrapeWebsite(url: string): Promise<string> {
       'body',
     ]
     for (const sel of selectors) {
-      const text = $(sel).first().text().replace(/\s+/g, ' ').trim()
+      const raw = $(sel).first().text()
+      const text = sanitizeText(raw)
       if (text.length > 150) return text.slice(0, 4000)
     }
     return ''

@@ -28,9 +28,9 @@ function buildRestaurantBlock(data: RestaurantAnalysis): string {
     : ''
 
   return `
-════════════════════════════════════════════════
-DONNÉES RÉELLES DU RESTAURANT — BASE-TOI EXCLUSIVEMENT SUR CES INFORMATIONS:
-════════════════════════════════════════════════
+================================================
+DONNEES REELLES DU RESTAURANT - BASE-TOI EXCLUSIVEMENT SUR CES INFORMATIONS:
+================================================
 Nom: ${data.name}
 ${data.description ? `Description: ${data.description}` : ''}
 ${specialtyLine}
@@ -38,9 +38,9 @@ ${highlightLine}
 ${data.websiteUrl ? `Site web: ${data.websiteUrl}` : ''}
 ${sourceNote}
 
-AVIS ET DESCRIPTIONS CLIENTS TROUVÉS EN LIGNE:
-${reviewLines || '  (aucun avis trouvé, base-toi sur les spécialités et la description)'}
-════════════════════════════════════════════════
+AVIS ET DESCRIPTIONS CLIENTS TROUVES EN LIGNE:
+${reviewLines || '  (aucun avis trouve, base-toi sur les specialites et la description)'}
+================================================
 
 RÈGLES CRITIQUES:
 - Utilise le nom exact "${data.name}" dans au moins 6 posts sur 10
