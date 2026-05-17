@@ -1,4 +1,4 @@
-import * as cheerio from 'cheerio'
+﻿import * as cheerio from 'cheerio'
 import { NextRequest, NextResponse } from 'next/server'
 
 const UA =
@@ -39,7 +39,6 @@ async function ddgSearch(query: string): Promise<SearchResult[]> {
       const href = titleEl.attr('href') ?? ''
       const snippet = $(el).find('.result__snippet, .result-snippet').text().trim()
 
-      // DDG wraps URLs in a redirect — extract the real URL
       let url = href
       const uddgMatch = href.match(/[?&]uddg=([^&]+)/)
       if (uddgMatch) {
@@ -89,24 +88,26 @@ function findOfficialUrl(results: SearchResult[], name: string): string | null {
     .split(/\s+/)
     .filter(p => p.length > 2)
 
-  // First pass: domain matches restaurant name
   for (const r of results) {
     if (isBlockedDomain(r.url)) continue
     const domain = r.url.replace(/https?:\/\//, '').split('/')[0].toLowerCase()
     if (nameParts.some(part => domain.includes(part))) return r.url
   }
 
-  // Second pass: any non-blocked result
   return results.find(r => !isBlockedDomain(r.url))?.url ?? null
 }
 
 // ─── Text sanitizer ───────────────────────────────────────────────────────────
 
-// Strips any character outside ISO-8859-1 (code point > 0xFF, e.g. emoji)
-// to prevent "String contains non ISO-8859-1 code point" errors in fetch headers
-// when this text is later forwarded to the Anthropic / OpenAI SDKs.
 function sanitizeText(text: string): string {
-  return text.replace(/[^\u0009\u000A\u000D\u0020-\u00FF]/g, ' ').replace(/\s+/g, ' ').trim()
+  // Replace BOM and any character whose code point exceeds 255 (non-Latin-1)
+  // so scraped content never causes ByteString errors in fetch() headers/body.
+  let out = ''
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    out += (c === 0xFEFF || c > 0x00FF) ? ' ' : text[i]
+  }
+  return out.replace(/\s+/g, ' ').trim()
 }
 
 // ─── Website scraper ──────────────────────────────────────────────────────────
@@ -122,13 +123,11 @@ async function scrapeWebsite(url: string): Promise<string> {
     const html = await res.text()
     const $ = cheerio.load(html)
 
-    // Remove noise
     $(
       'script, style, nav, footer, header, aside, iframe, noscript, ' +
       '[class*="cookie"], [class*="popup"], [class*="banner"], [id*="cookie"]'
     ).remove()
 
-    // Try rich content areas first, fall back to body
     const selectors = [
       'main', 'article', '[role="main"]',
       '#content', '.content', '.main-content',
@@ -208,7 +207,6 @@ function buildDescription(
   searchResults: SearchResult[],
   name: string
 ): string {
-  // Prefer website text if it contains the restaurant name
   if (websiteText.length > 80) {
     const nameLower = name.toLowerCase()
     const idx = websiteText.toLowerCase().indexOf(nameLower)
@@ -219,7 +217,6 @@ function buildDescription(
     return websiteText.slice(0, 400).trim()
   }
 
-  // Fall back to the best snippet from search results
   return (
     searchResults
       .filter(r => !isBlockedDomain(r.url))
@@ -257,10 +254,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Find official website and scrape it
-    const websiteUrl = findOfficialUrl(generalResults, name)
-    const websiteText = websiteUrl ? await scrapeWebsite(websiteUrl) : ''
+    const officialUrl = findOfficialUrl(generalResults, name)
+    const websiteText = officialUrl ? await scrapeWebsite(officialUrl) : ''
 
-    // Aggregate all text sources for extraction
     const allSnippets = [
       ...generalResults.map(r => r.snippet),
       ...reviewResults.map(r => r.snippet),
@@ -272,12 +268,11 @@ export async function POST(request: NextRequest) {
     const reviews = extractReviews([...generalResults, ...reviewResults])
     const description = buildDescription(websiteText, generalResults, name)
 
-    // Build source list for transparency
     const sources: string[] = []
-    if (websiteUrl) sources.push('Site officiel')
+    if (officialUrl) sources.push('Site officiel')
     const reviewPlatforms = [...new Set(reviews.map(r => r.source))]
     sources.push(...reviewPlatforms)
-    if (sources.length === 0) sources.push('DuckDuckGo')
+    if (sources.length === 0) sources.push('Web')
 
     return NextResponse.json({
       name,
@@ -285,13 +280,13 @@ export async function POST(request: NextRequest) {
       specialties,
       highlights,
       reviews,
-      websiteUrl,
+      websiteUrl: officialUrl,
       sources,
     })
   } catch (error) {
     console.error('analyze-restaurant error:', error)
     return NextResponse.json(
-      { error: 'Erreur lors de l\'analyse. Réessaie dans un instant.' },
+      { error: "Erreur lors de l'analyse. Réessaie dans un instant." },
       { status: 500 }
     )
   }

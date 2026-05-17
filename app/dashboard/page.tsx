@@ -6,8 +6,7 @@ import Link from 'next/link'
 import {
   Sparkles, Camera, Play, Clock, Copy, Check, Zap, LogOut,
   ChevronDown, Loader2, ImageIcon, Download, Building2,
-  AlertCircle, Search, MessageSquare, ChevronRight, X,
-  Globe, UtensilsCrossed, ThumbsUp,
+  AlertCircle, Crown, History,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 
@@ -16,15 +15,12 @@ import { createClient } from '@/lib/supabase/client'
 interface Post { text: string; hashtags: string; bestTime: string }
 interface GeneratedContent { instagram: Post[]; tiktok: Post[] }
 interface ImageState { loading: boolean; dataUrl: string | null; error: string | null }
-
-interface RestaurantAnalysis {
-  name: string
-  description: string
-  specialties: string[]
-  highlights: string[]
-  reviews: { source: string; text: string; rating?: string }[]
-  websiteUrl: string | null
-  sources: string[]
+interface SubInfo {
+  trialDaysLeft: number
+  trialActive: boolean
+  subscriptionActive: boolean
+  hasAccess: boolean
+  hasStripeCustomer: boolean
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -44,33 +40,17 @@ const VILLES = [
   'Mouscron', 'Verviers', 'Autre ville',
 ]
 
-const SOURCE_COLORS: Record<string, { bg: string; color: string; border: string }> = {
-  TripAdvisor: { bg: 'rgba(0,166,81,0.12)', color: '#00a651', border: 'rgba(0,166,81,0.25)' },
-  TheFork: { bg: 'rgba(82,186,82,0.12)', color: '#52ba52', border: 'rgba(82,186,82,0.25)' },
-  Yelp: { bg: 'rgba(196,4,4,0.1)', color: '#c40404', border: 'rgba(196,4,4,0.2)' },
-  Foursquare: { bg: 'rgba(249,84,84,0.1)', color: '#f95454', border: 'rgba(249,84,84,0.2)' },
-  Guide: { bg: 'rgba(255,204,0,0.12)', color: '#b38a00', border: 'rgba(255,204,0,0.25)' },
-  Web: { bg: 'rgba(102,126,234,0.1)', color: '#667eea', border: 'rgba(102,126,234,0.2)' },
-}
-
-function sourceStyle(source: string) {
-  return SOURCE_COLORS[source] ?? SOURCE_COLORS.Web
-}
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
   const router = useRouter()
   const [user, setUser] = useState<{ email: string; name: string } | null>(null)
   const [businessName, setBusinessName] = useState('')
+  const [businessDescription, setBusinessDescription] = useState('')
   const [secteur, setSecteur] = useState('')
   const [ville, setVille] = useState('')
   const [ton, setTon] = useState<'fun' | 'pro' | 'inspirant'>('fun')
   const [langue, setLangue] = useState<'FR' | 'NL' | 'EN'>('FR')
-
-  const [analyzeLoading, setAnalyzeLoading] = useState(false)
-  const [analyzeError, setAnalyzeError] = useState('')
-  const [restaurantData, setRestaurantData] = useState<RestaurantAnalysis | null>(null)
 
   const [loading, setLoading] = useState(false)
   const [content, setContent] = useState<GeneratedContent | null>(null)
@@ -78,8 +58,8 @@ export default function DashboardPage() {
   const [copied, setCopied] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'instagram' | 'tiktok'>('instagram')
   const [imageStates, setImageStates] = useState<Record<string, ImageState>>({})
-
-  const isRestaurant = secteur === 'Restaurant / Café'
+  const [subInfo, setSubInfo] = useState<SubInfo | null>(null)
+  const [portalLoading, setPortalLoading] = useState(false)
 
   useEffect(() => {
     const supabase = createClient()
@@ -90,11 +70,27 @@ export default function DashboardPage() {
         name: data.user.user_metadata?.full_name ?? data.user.email ?? '',
       })
     })
-  }, [router])
 
-  useEffect(() => {
-    if (!isRestaurant) setRestaurantData(null)
-  }, [isRestaurant])
+    const justSubscribed = typeof window !== 'undefined' &&
+      window.location.search.includes('subscribed=true')
+
+    if (justSubscribed) {
+      window.history.replaceState({}, '', '/dashboard')
+      // Sync subscription status directly from Stripe, then refresh banner
+      fetch('/api/stripe/sync', { method: 'POST' })
+        .then(() => fetch('/api/subscription'))
+        .then(r => r.json())
+        .then((info: SubInfo) => setSubInfo(info))
+        .catch(() => {})
+    } else {
+      fetch('/api/subscription').then(r => r.json()).then((info: SubInfo) => {
+        setSubInfo(info)
+        if (info?.hasAccess === false) {
+          router.replace('/pricing?expired=true')
+        }
+      }).catch(() => {})
+    }
+  }, [router])
 
   const handleLogout = async () => {
     const supabase = createClient()
@@ -102,25 +98,14 @@ export default function DashboardPage() {
     router.push('/')
   }
 
-  const handleAnalyze = async () => {
-    if (!businessName.trim()) { setAnalyzeError('Entre le nom du restaurant.'); return }
-    if (!ville) { setAnalyzeError('Choisis la ville du restaurant.'); return }
-    setAnalyzeLoading(true)
-    setAnalyzeError('')
-    setRestaurantData(null)
-
+  const handlePortal = async () => {
+    setPortalLoading(true)
     try {
-      const res = await fetch('/api/analyze-restaurant', {
-        method: 'POST',
-        body: JSON.stringify({ restaurantName: businessName.trim(), ville }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
-      setRestaurantData(data)
-    } catch (err) {
-      setAnalyzeError(err instanceof Error ? err.message : 'Erreur inconnue')
-    } finally {
-      setAnalyzeLoading(false)
+      const res = await fetch('/api/stripe/portal', { method: 'POST' })
+      const { url } = await res.json()
+      if (url) window.location.href = url
+    } catch {
+      setPortalLoading(false)
     }
   }
 
@@ -134,12 +119,22 @@ export default function DashboardPage() {
     try {
       const res = await fetch('/api/generate', {
         method: 'POST',
-        body: JSON.stringify({ secteur, ville, ton, langue, businessName, restaurantData }),
+        body: JSON.stringify({ secteur, ville, ton, langue, businessName, businessDescription }),
       })
       if (!res.ok) { const d = await res.json(); throw new Error(d.error) }
       const data = await res.json()
       setContent(data)
       setActiveTab('instagram')
+
+      // Sauvegarde automatique dans l'historique
+      fetch('/api/generations', {
+        method: 'POST',
+        body: JSON.stringify({
+          secteur, ville, ton, langue,
+          description: businessDescription || null,
+          posts: data,
+        }),
+      }).catch(() => {})
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Une erreur est survenue.')
     } finally {
@@ -191,16 +186,68 @@ export default function DashboardPage() {
           </div>
           <span className="font-bold text-lg">ContentAI</span>
         </Link>
-        {user && (
-          <div className="flex items-center gap-4">
-            <span className="text-gray-400 text-sm hidden sm:block">{user.email}</span>
-            <button onClick={handleLogout}
-              className="flex items-center gap-2 text-gray-400 hover:text-white text-sm transition-colors">
-              <LogOut className="w-4 h-4" /><span className="hidden sm:block">Déconnexion</span>
-            </button>
-          </div>
-        )}
+        <div className="flex items-center gap-4">
+          <Link href="/dashboard/historique"
+            className="flex items-center gap-1.5 text-gray-400 hover:text-white text-sm transition-colors">
+            <History className="w-4 h-4" />
+            <span className="hidden sm:block">Historique</span>
+          </Link>
+          {user && (
+            <>
+              <span className="text-gray-400 text-sm hidden sm:block">{user.email}</span>
+              <button onClick={handleLogout}
+                className="flex items-center gap-2 text-gray-400 hover:text-white text-sm transition-colors">
+                <LogOut className="w-4 h-4" /><span className="hidden sm:block">Déconnexion</span>
+              </button>
+            </>
+          )}
+        </div>
       </header>
+
+      {/* ── Subscription / Trial banner ── */}
+      {subInfo && !subInfo.subscriptionActive && subInfo.trialActive && (
+        <div className="px-6 py-3 flex items-center justify-between gap-4"
+          style={{
+            background: subInfo.trialDaysLeft <= 3
+              ? 'linear-gradient(90deg, rgba(245,87,92,0.15), rgba(253,117,81,0.15))'
+              : 'linear-gradient(90deg, rgba(102,126,234,0.12), rgba(240,147,251,0.12))',
+            borderBottom: '1px solid rgba(255,255,255,0.06)',
+          }}>
+          <div className="flex items-center gap-2 text-sm">
+            <Zap className="w-4 h-4 flex-shrink-0"
+              style={{ color: subInfo.trialDaysLeft <= 3 ? '#f5576c' : '#f093fb' }} />
+            <span style={{ color: subInfo.trialDaysLeft <= 3 ? '#fca5a5' : '#c4b5fd' }}>
+              {subInfo.trialDaysLeft <= 3
+                ? `Ton essai se termine dans ${subInfo.trialDaysLeft} jour${subInfo.trialDaysLeft > 1 ? 's' : ''} !`
+                : `Essai gratuit · ${subInfo.trialDaysLeft} jour${subInfo.trialDaysLeft > 1 ? 's' : ''} restant${subInfo.trialDaysLeft > 1 ? 's' : ''}`}
+            </span>
+          </div>
+          <a href="/pricing"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white flex-shrink-0 transition-opacity hover:opacity-80"
+            style={{ background: 'linear-gradient(135deg, #f093fb, #667eea)' }}>
+            <Crown className="w-3 h-3" />
+            Passer à Pro
+          </a>
+        </div>
+      )}
+
+      {/* ── Pro badge (subscribed) ── */}
+      {subInfo?.subscriptionActive && (
+        <div className="px-6 py-2.5 flex items-center justify-between gap-4"
+          style={{
+            background: 'linear-gradient(90deg, rgba(34,197,94,0.08), rgba(16,185,129,0.08))',
+            borderBottom: '1px solid rgba(34,197,94,0.12)',
+          }}>
+          <div className="flex items-center gap-2 text-sm text-green-400">
+            <Crown className="w-4 h-4" />
+            <span>ContentAI Pro — abonnement actif</span>
+          </div>
+          <button onClick={handlePortal} disabled={portalLoading}
+            className="text-xs text-green-500 hover:text-green-300 transition-colors disabled:opacity-50">
+            {portalLoading ? 'Chargement...' : 'Gérer mon abonnement →'}
+          </button>
+        </div>
+      )}
 
       <main className="max-w-6xl mx-auto px-6 py-10">
 
@@ -219,66 +266,47 @@ export default function DashboardPage() {
             Personnalise ton contenu
           </h2>
 
-          {/* Business / restaurant name */}
-          <div className="mb-5">
+          {/* Business name */}
+          <div className="mb-4">
             <label className="block text-sm font-medium text-gray-300 mb-2">
-              {isRestaurant ? 'Nom du restaurant' : 'Nom de ton business'}
+              Nom de ton business
               <span className="ml-2 text-xs text-gray-500 font-normal">(optionnel mais recommandé)</span>
             </label>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-                <input
-                  type="text"
-                  value={businessName}
-                  onChange={(e) => { setBusinessName(e.target.value); if (restaurantData) setRestaurantData(null) }}
-                  placeholder={isRestaurant
-                    ? 'ex : Le Colonel, La Maison du Peuple...'
-                    : 'ex : Salon Éclat, Studio Move...'}
-                  className="w-full pl-10 pr-4 py-3 rounded-xl text-white placeholder-gray-600 text-sm"
-                  style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)' }}
-                />
-              </div>
-
-              {/* Analyze button — restaurants only */}
-              {isRestaurant && (
-                <button
-                  onClick={handleAnalyze}
-                  disabled={analyzeLoading || !businessName.trim() || !ville}
-                  title={!ville ? 'Choisis d\'abord la ville' : ''}
-                  className="flex items-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold transition-all disabled:opacity-40 whitespace-nowrap"
-                  style={{
-                    background: restaurantData
-                      ? 'rgba(34,197,94,0.15)'
-                      : 'linear-gradient(135deg, rgba(102,126,234,0.25), rgba(118,75,162,0.25))',
-                    border: restaurantData ? '1px solid rgba(34,197,94,0.3)' : '1px solid rgba(102,126,234,0.35)',
-                    color: restaurantData ? '#22c55e' : '#a78bfa',
-                  }}>
-                  {analyzeLoading
-                    ? <><Loader2 className="w-4 h-4 animate-spin" />Analyse...</>
-                    : restaurantData
-                    ? <><Check className="w-4 h-4" />Analysé !</>
-                    : <><Search className="w-4 h-4" />Analyser</>}
-                </button>
-              )}
+            <div className="relative">
+              <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+              <input
+                type="text"
+                value={businessName}
+                onChange={(e) => setBusinessName(e.target.value)}
+                placeholder="ex : Le Colonel, Salon Éclat, Studio Move..."
+                className="w-full pl-10 pr-4 py-3 rounded-xl text-white placeholder-gray-600 text-sm"
+                style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)' }}
+              />
             </div>
-
-            {/* Hint text */}
-            {isRestaurant && !restaurantData && !analyzeLoading && (
-              <p className="mt-1.5 text-xs text-gray-500">
-                {!ville
-                  ? '👆 Choisis la ville, puis clique "Analyser" pour importer le site web et les avis'
-                  : '🔍 Clique "Analyser" — ContentAI visite le site du restaurant et lit les avis en ligne'}
-              </p>
-            )}
-            {!isRestaurant && businessName.trim() && (
+            {businessName.trim() && (
               <p className="mt-1.5 text-xs" style={{ color: '#f093fb' }}>
                 ✓ L&apos;IA mentionnera &quot;{businessName.trim()}&quot; dans tes posts
               </p>
             )}
-            {analyzeError && (
-              <p className="mt-2 text-xs text-red-400 flex items-center gap-1.5">
-                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />{analyzeError}
+          </div>
+
+          {/* Business description */}
+          <div className="mb-5">
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Décris ton business en quelques mots
+              <span className="ml-2 text-xs text-gray-500 font-normal">(optionnel mais recommandé)</span>
+            </label>
+            <textarea
+              value={businessDescription}
+              onChange={(e) => setBusinessDescription(e.target.value)}
+              placeholder="Ex: Spécialisé dans la viande de bœuf belge, cadre élégant, terrasse à Bruxelles..."
+              rows={2}
+              className="w-full px-4 py-3 rounded-xl text-white placeholder-gray-600 text-sm resize-none"
+              style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)' }}
+            />
+            {businessDescription.trim() && (
+              <p className="mt-1.5 text-xs" style={{ color: '#f093fb' }}>
+                ✓ L&apos;IA utilisera cette description pour créer du contenu 100% authentique
               </p>
             )}
           </div>
@@ -367,174 +395,26 @@ export default function DashboardPage() {
             {loading
               ? <><Loader2 className="w-5 h-5 animate-spin" />Génération en cours... (10-20 sec)</>
               : <><Sparkles className="w-5 h-5" />
-                  {restaurantData ? `Générer le contenu pour ${restaurantData.name}` : 'Générer mon contenu'}
+                  {businessName.trim() ? `Générer le contenu pour ${businessName.trim()}` : 'Générer mon contenu'}
                 </>}
           </button>
 
           {loading && (
             <p className="text-center text-gray-500 text-xs mt-3">
-              {restaurantData
-                ? `L'IA utilise les vraies infos de ${restaurantData.name} pour créer du contenu authentique...`
+              {businessDescription.trim()
+                ? "L'IA utilise ta description pour créer du contenu 100% authentique..."
                 : "L'IA crée 10 posts Instagram + 10 scripts TikTok sur mesure..."}
             </p>
           )}
         </div>
-
-        {/* ── Restaurant Analysis Card ── */}
-        {restaurantData && (
-          <div className="mb-8 rounded-3xl overflow-hidden"
-            style={{ border: '1px solid rgba(102,126,234,0.25)', background: 'rgba(102,126,234,0.05)' }}>
-
-            {/* Card header */}
-            <div className="px-6 py-4 flex items-center justify-between"
-              style={{ background: 'rgba(102,126,234,0.1)', borderBottom: '1px solid rgba(102,126,234,0.18)' }}>
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-                  style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-                  <Search className="w-4 h-4 text-white" />
-                </div>
-                <div>
-                  <p className="font-bold text-white text-sm">
-                    Voici ce qu&apos;on a trouvé sur {restaurantData.name}
-                  </p>
-                  <p className="text-xs text-gray-400">
-                    Ces données seront intégrées dans la génération IA
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                {/* Source badges */}
-                <div className="hidden sm:flex gap-1.5">
-                  {restaurantData.sources.map(src => {
-                    const style = sourceStyle(src)
-                    return (
-                      <span key={src} className="text-xs px-2 py-0.5 rounded-full font-medium"
-                        style={{ background: style.bg, color: style.color, border: `1px solid ${style.border}` }}>
-                        {src}
-                      </span>
-                    )
-                  })}
-                </div>
-                <button onClick={() => setRestaurantData(null)}
-                  className="text-gray-500 hover:text-white transition-colors p-1">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            <div className="p-6 space-y-5">
-
-              {/* Description */}
-              {restaurantData.description && (
-                <div>
-                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                    <Globe className="w-3.5 h-3.5" />
-                    Description trouvée
-                  </p>
-                  <p className="text-gray-300 text-sm leading-relaxed p-3 rounded-xl"
-                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                    {restaurantData.description.slice(0, 350)}
-                    {restaurantData.description.length > 350 ? '…' : ''}
-                  </p>
-                  {restaurantData.websiteUrl && (
-                    <a href={restaurantData.websiteUrl} target="_blank" rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs mt-1.5 hover:opacity-80 transition-opacity"
-                      style={{ color: '#667eea' }}>
-                      <Globe className="w-3 h-3" />
-                      {new URL(restaurantData.websiteUrl).hostname}
-                    </a>
-                  )}
-                </div>
-              )}
-
-              {/* Specialties */}
-              {restaurantData.specialties.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                    <UtensilsCrossed className="w-3.5 h-3.5" />
-                    Spécialités & plats détectés
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {restaurantData.specialties.map(s => (
-                      <span key={s} className="text-xs px-2.5 py-1 rounded-full font-medium capitalize"
-                        style={{ background: 'rgba(240,147,251,0.12)', color: '#f093fb', border: '1px solid rgba(240,147,251,0.2)' }}>
-                        {s}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Highlights */}
-              {restaurantData.highlights.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                    <ThumbsUp className="w-3.5 h-3.5" />
-                    Points forts dans les avis
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {restaurantData.highlights.map(h => (
-                      <span key={h} className="text-xs px-2.5 py-1 rounded-full font-medium capitalize"
-                        style={{ background: 'rgba(253,117,81,0.12)', color: '#fd7551', border: '1px solid rgba(253,117,81,0.22)' }}>
-                        {h}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Reviews from web */}
-              {restaurantData.reviews.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                    <MessageSquare className="w-3.5 h-3.5" />
-                    Avis trouvés en ligne ({restaurantData.reviews.length})
-                  </p>
-                  <div className="space-y-2.5">
-                    {restaurantData.reviews.map((rev, i) => {
-                      const style = sourceStyle(rev.source)
-                      return (
-                        <div key={i} className="p-3 rounded-xl"
-                          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                          <div className="flex items-center gap-2 mb-1.5">
-                            <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                              style={{ background: style.bg, color: style.color, border: `1px solid ${style.border}` }}>
-                              {rev.source}
-                            </span>
-                            {rev.rating && (
-                              <span className="text-xs font-medium" style={{ color: '#fd7551' }}>
-                                ⭐ {rev.rating}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-gray-400 text-xs leading-relaxed">{rev.text}</p>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Confirmation banner */}
-              <div className="flex items-center gap-2 text-xs pt-1"
-                style={{ color: '#22c55e' }}>
-                <Check className="w-4 h-4 flex-shrink-0" />
-                <span className="font-medium">
-                  Ces informations seront injectées dans le prompt Claude pour un contenu 100% personnalisé
-                </span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* ── Results ── */}
         {content && (
           <div>
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-extrabold">
-                {(restaurantData?.name || businessName.trim())
-                  ? <><span className="gradient-text">{restaurantData?.name || businessName.trim()}</span> — contenu prêt !</>
+                {businessName.trim()
+                  ? <><span className="gradient-text">{businessName.trim()}</span> — contenu prêt !</>
                   : <>Ton contenu <span className="gradient-text">est prêt !</span></>}
               </h2>
               <span className="text-gray-500 text-sm">{secteur} · {ville}</span>

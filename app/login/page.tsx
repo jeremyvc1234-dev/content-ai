@@ -2,12 +2,10 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { Sparkles, Mail, Lock, Eye, EyeOff } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 
 export default function LoginPage() {
-  const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -21,19 +19,17 @@ export default function LoginPage() {
 
     try {
       const supabase = createClient()
-      const { error } = await supabase.auth.signInWithPassword({ email, password })
+      console.log('[login] calling signInWithPassword...')
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+
+      console.log('[login] result → user:', data?.user?.id ?? 'null', '| error:', error?.message ?? 'none')
 
       if (error) {
-        console.error('[login] signInWithPassword error:', error.status, error.message, error)
-        if (error.message.toLowerCase().includes('invalid') || error.status === 400) {
-          setError('Email ou mot de passe incorrect.')
-        } else {
-          setError(`Erreur de connexion : ${error.message}`)
-        }
+        setError(error.message)
         setLoading(false)
       } else {
-        router.refresh()
-        router.push('/dashboard')
+        console.log('[login] success — navigating to /dashboard')
+        window.location.replace('/dashboard')
       }
     } catch (err) {
       console.error('[login] unexpected error:', err)
